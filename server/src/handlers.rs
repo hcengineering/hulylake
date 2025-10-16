@@ -512,6 +512,79 @@ pub async fn delete(_path: Path<ObjectPath>) -> HandlerResult<HttpResponse> {
     unimplemented!("delete is not implemented")
 }
 
+#[instrument(level = "debug", skip_all, fields(workspace, huly_key))]
+pub async fn compact(request: HttpRequest) -> HandlerResult<HttpResponse> {
+    let span = Span::current();
+
+    let mut request = ServiceRequest::from_request(request);
+
+    let path = request.extract::<Path<ObjectPath>>().await?.into_inner();
+
+    span.record("workspace", path.workspace.to_string());
+    span.record("huly_key", &path.key);
+
+    let pool = request.app_data::<Data<Pool>>().unwrap().to_owned();
+
+    let parts = postgres::find_parts::<PartData>(&pool, path.workspace, &path.key).await?;
+
+    let response = if parts.len() > 1 {
+        let headers = parts[0].data.headers.clone();
+        let meta = parts[0].data.meta.clone();
+        let merge_strategy = parts[0].data.merge_strategy;
+
+        let s3 = request
+            .app_data::<Data<S3Client>>()
+            .unwrap()
+            .to_owned()
+            .into_inner();
+
+        let stream = merge::stream(s3.clone(), parts).await?;
+
+        let uploaded = blob::upload(
+            &s3,
+            &pool,
+            Size::from_bytes(stream.content_length),
+            stream.stream,
+        )
+        .await?;
+
+        let part_data = PartData {
+            workspace: path.workspace,
+            key: path.key,
+            part: 0,
+            blob: uploaded.s3_key,
+            size: uploaded.length,
+            etag: random_etag(),
+            date: chrono::Utc::now(),
+            headers,
+            meta,
+            merge_strategy,
+        };
+
+        let inline = uploaded.inline.and_then(|inline| {
+            if inline.len() < CONFIG.inline_threshold.bytes() as usize {
+                Some(inline)
+            } else {
+                None
+            }
+        });
+
+        let obj_parts = vec![&part_data];
+
+        recovery::set_object(&s3, path.workspace, &part_data.key, obj_parts, None).await?;
+
+        postgres::set_part(&pool, path.workspace, &part_data.key, inline, &part_data).await?;
+
+        HttpResponse::Ok()
+            .insert_header((header::ETAG, part_data.etag))
+            .finish()
+    } else {
+        HttpResponse::NotFound().finish()
+    };
+
+    Ok(response)
+}
+
 fn objectpart_etag(parts: &Vec<ObjectPart<PartData>>) -> Option<EntityTag> {
     parts
         .last()

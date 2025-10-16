@@ -183,6 +183,10 @@ async fn main() -> anyhow::Result<()> {
                     .route(KEY_PATH, web::put().to(handlers::put).wrap(from_fn(mutex)))
                     .route(
                         KEY_PATH,
+                        web::post().to(handlers::compact).wrap(from_fn(mutex)),
+                    )
+                    .route(
+                        KEY_PATH,
                         web::patch().to(handlers::patch).wrap(from_fn(mutex)),
                     )
                     .route(KEY_PATH, web::delete().to(handlers::delete)),
