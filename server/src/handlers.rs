@@ -430,9 +430,12 @@ pub async fn get(request: HttpRequest) -> HandlerResult<HttpResponse> {
                             response.insert_header((header::CONTENT_RANGE, content_range));
                         }
 
-                        response.body(partial.stream)
+                        response.body(SizedStream::new(partial.content_length, partial.stream))
                     }
-                    None => response.body(merge::stream(s3, parts).await?),
+                    None => {
+                        let stream = merge::stream(s3, parts).await?;
+                        response.body(SizedStream::new(stream.content_length, stream.stream))
+                    }
                 }
             }
         }
