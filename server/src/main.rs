@@ -138,6 +138,27 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    async fn mutex(
+        mut request: ServiceRequest,
+        next: Next<impl MessageBody>,
+    ) -> Result<ServiceResponse<impl MessageBody>, Error> {
+        let path = request
+            .extract::<Path<handlers::ObjectPath>>()
+            .await?
+            .into_inner();
+
+        let lock_pool = request
+            .app_data::<Data<Arc<LockPool<String>>>>()
+            .unwrap()
+            .to_owned();
+
+        let _guard = lock_pool
+            .async_lock(format!("{}:{}", path.workspace, path.key))
+            .await;
+
+        next.call(request).await
+    }
+
     let server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
@@ -159,8 +180,11 @@ async fn main() -> anyhow::Result<()> {
                     .wrap(from_fn(auth))
                     .route(KEY_PATH, web::head().to(handlers::head))
                     .route(KEY_PATH, web::get().to(handlers::get))
-                    .route(KEY_PATH, web::put().to(handlers::put))
-                    .route(KEY_PATH, web::patch().to(handlers::patch))
+                    .route(KEY_PATH, web::put().to(handlers::put).wrap(from_fn(mutex)))
+                    .route(
+                        KEY_PATH,
+                        web::patch().to(handlers::patch).wrap(from_fn(mutex)),
+                    )
                     .route(KEY_PATH, web::delete().to(handlers::delete)),
             )
             .route("/status", web::get().to(async || "ok"))
