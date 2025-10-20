@@ -40,6 +40,7 @@ pub struct Config {
 
     pub cache_control: String,
 
+    pub compact_parts_limit: usize,
     pub compact_buffer_size: usize,
 }
 
@@ -70,9 +71,10 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
         multipart_threshold = "4MB"
         inline_threshold = "100KB"
 
-        compact_buffer_size = 1000
-
         cache_control = "public, no-cache"
+
+        compact_parts_limit = 10
+        compact_buffer_size = 1000
     "#;
 
     let mut builder =

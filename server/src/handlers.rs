@@ -439,12 +439,7 @@ pub async fn get(request: HttpRequest) -> HandlerResult<HttpResponse> {
                             .unwrap()
                             .to_owned();
 
-                        compact
-                            .send(CompactTask {
-                                workspace: path.workspace,
-                                key: path.key,
-                            })
-                            .await?;
+                        compact.send(&parts).await?;
 
                         let stream = merge::stream(s3.clone(), parts).await?;
                         response.body(SizedStream::new(stream.content_length, stream.stream))

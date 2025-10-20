@@ -165,6 +165,7 @@ async fn main() -> anyhow::Result<()> {
         postgres.clone(),
         CONFIG.compact_buffer_size,
     );
+    let compactor_handle = compactor.clone();
 
     let server = HttpServer::new(move || {
         let cors = Cors::default()
@@ -203,6 +204,7 @@ async fn main() -> anyhow::Result<()> {
     info!("http listener on {}", bind_to);
 
     server.await?;
+    compactor_handle.stop().await;
 
     Ok(())
 }
