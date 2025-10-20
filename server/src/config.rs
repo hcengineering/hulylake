@@ -39,6 +39,8 @@ pub struct Config {
     pub inline_threshold: Size,
 
     pub cache_control: String,
+
+    pub compact_buffer_size: usize,
 }
 
 pub mod hulyrs {
@@ -67,6 +69,8 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
 
         multipart_threshold = "4MB"
         inline_threshold = "100KB"
+
+        compact_buffer_size = 1000
 
         cache_control = "public, no-cache"
     "#;

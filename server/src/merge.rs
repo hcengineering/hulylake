@@ -127,7 +127,7 @@ pub async fn partial(
 
 pub struct StreamResponse {
     pub content_length: u64,
-    pub stream: Pin<Box<dyn Stream<Item = Result<Bytes, IoError>>>>,
+    pub stream: Pin<Box<dyn Stream<Item = Result<Bytes, IoError>> + Send>>,
 }
 
 #[instrument(level = "debug", skip_all)]

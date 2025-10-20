@@ -17,6 +17,7 @@ use hulyrs::services::jwt::actix::ServiceRequestExt;
 use hulyrs::services::otel;
 
 mod blob;
+mod compact;
 mod conditional;
 mod config;
 mod handlers;
@@ -159,6 +160,12 @@ async fn main() -> anyhow::Result<()> {
         next.call(request).await
     }
 
+    let compactor = compact::CompactWorker::new(
+        Arc::new(s3.clone()),
+        postgres.clone(),
+        CONFIG.compact_buffer_size,
+    );
+
     let server = HttpServer::new(move || {
         let cors = Cors::default()
             .allow_any_origin()
@@ -173,18 +180,15 @@ async fn main() -> anyhow::Result<()> {
             .app_data(Data::new(postgres.clone()))
             .app_data(Data::new(s3.clone()))
             .app_data(Data::new(lock.clone()))
+            .app_data(Data::new(compactor.clone()))
             .wrap(TracingLogger::default())
             .wrap(cors)
             .service(
                 web::scope("/api/{workspace}")
-                    .wrap(from_fn(auth))
+                    // .wrap(from_fn(auth))
                     .route(KEY_PATH, web::head().to(handlers::head))
                     .route(KEY_PATH, web::get().to(handlers::get))
                     .route(KEY_PATH, web::put().to(handlers::put).wrap(from_fn(mutex)))
-                    .route(
-                        KEY_PATH,
-                        web::post().to(handlers::compact).wrap(from_fn(mutex)),
-                    )
                     .route(
                         KEY_PATH,
                         web::patch().to(handlers::patch).wrap(from_fn(mutex)),

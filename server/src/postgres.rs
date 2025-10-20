@@ -122,7 +122,7 @@ pub async fn insert_blob(pool: &Pool, key: &str, hash: &str) -> anyhow::Result<(
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ObjectPart<T: DeserializeOwned + std::fmt::Debug> {
     pub inline: Option<Vec<u8>>,
     pub data: T,
@@ -201,6 +201,45 @@ pub async fn set_part<D: serde::Serialize>(
 
     let data = serde_json::to_value(data)?;
     let inline = inline.map(|b| b.to_vec());
+
+    transaction
+        .execute(
+            r#"
+            insert into object (workspace, key, part, inline, data) values ($1, $2, 0, $3, $4)
+            on conflict (workspace, key, part) do update set
+                inline = $3, 
+                data = $4
+            "#,
+            &[&workspace, &key, &inline, &data],
+        )
+        .await?;
+
+    transaction.commit().await?;
+
+    Ok(())
+}
+
+pub async fn compact<D: serde::Serialize + DeserializeOwned + std::fmt::Debug>(
+    pool: &Pool,
+    workspace: uuid::Uuid,
+    key: &str,
+    inline: Option<Bytes>,
+    data: &D,
+    last: u32,
+) -> anyhow::Result<(), DbError> {
+    let mut connection = get_connection(pool).await?;
+
+    let data = serde_json::to_value(data)?;
+    let inline = inline.map(|b| b.to_vec());
+
+    let transaction = connection.transaction().await?;
+
+    transaction
+        .execute(
+            "delete from object where workspace = $1 and key = $2 and part <= $3",
+            &[&workspace, &key, &(last as i32)],
+        )
+        .await?;
 
     transaction
         .execute(
