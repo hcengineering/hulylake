@@ -8,7 +8,8 @@ use uuid::Uuid;
 
 use crate::config::CONFIG;
 use crate::handlers::{ApiError, PartData};
-use crate::merge::{self};
+use crate::merge;
+use crate::mutex::KeyMutex;
 use crate::postgres::{ObjectPart, Pool};
 use crate::s3::S3Client;
 use crate::{blob, postgres, recovery};
@@ -36,7 +37,7 @@ impl Clone for CompactWorker {
 }
 
 impl CompactWorker {
-    pub fn new(s3: Arc<S3Client>, pool: Pool, buffer_size: usize) -> Self {
+    pub fn new(s3: Arc<S3Client>, pool: Pool, lock: Arc<KeyMutex>, buffer_size: usize) -> Self {
         let (ingest_tx, ingest_rx) = mpsc::channel(buffer_size);
         let (compact_tx, compact_rx) = mpsc::channel(buffer_size);
 
@@ -51,7 +52,14 @@ impl CompactWorker {
 
         let compact_handle = tokio::spawn(async move {
             debug!(buffer_size, "started compact worker");
-            Self::run_compact_worker(compact_rx, s3.clone(), pool, pending_tasks_compact).await;
+            Self::run_compact_worker(
+                compact_rx,
+                s3.clone(),
+                pool,
+                lock.clone(),
+                pending_tasks_compact,
+            )
+            .await;
         });
 
         Self {
@@ -85,11 +93,16 @@ impl CompactWorker {
         mut rx: mpsc::Receiver<CompactTask>,
         s3: Arc<S3Client>,
         pool: Pool,
+        lock: Arc<KeyMutex>,
         pending_tasks: Arc<RwLock<HashSet<CompactTask>>>,
     ) {
         loop {
             while let Some(task) = rx.recv().await {
-                debug!(key = %task.key, workspace = %task.workspace, "processing compact task");
+                let CompactTask { workspace, key } = task.clone();
+
+                debug!(key = %key, workspace = %workspace, "processing compact task");
+                let _guard = lock.lock(workspace, key).await;
+
                 let res = compact(s3.clone(), pool.clone(), task.clone()).await;
                 if let Err(err) = res {
                     error!(%err, "failed to compact");

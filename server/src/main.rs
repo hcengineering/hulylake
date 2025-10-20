@@ -8,7 +8,6 @@ use actix_web::{
     middleware::{Next, from_fn},
     web::{self, Data, Path},
 };
-use lockable::LockPool;
 use tracing::*;
 use tracing_actix_web::TracingLogger;
 use uuid::Uuid;
@@ -22,12 +21,15 @@ mod conditional;
 mod config;
 mod handlers;
 mod merge;
+mod mutex;
 mod patch;
 mod postgres;
 mod recovery;
 mod s3;
 
 use config::CONFIG;
+
+use crate::mutex::KeyMutex;
 
 fn initialize_tracing() {
     use opentelemetry::trace::TracerProvider;
@@ -97,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
         "configuration"
     );
 
-    let lock = Arc::new(LockPool::<String>::new());
+    let lock = mutex::KeyMutex::new();
     let postgres = postgres::pool().await?;
     let s3 = s3::client().await;
 
@@ -111,6 +113,7 @@ async fn main() -> anyhow::Result<()> {
 
     let bind_to = SocketAddr::new(CONFIG.bind_host.as_str().parse()?, CONFIG.bind_port);
 
+    #[allow(dead_code)]
     async fn auth(
         mut request: ServiceRequest,
         next: Next<impl MessageBody>,
@@ -148,14 +151,12 @@ async fn main() -> anyhow::Result<()> {
             .await?
             .into_inner();
 
-        let lock_pool = request
-            .app_data::<Data<Arc<LockPool<String>>>>()
+        let mutex = request
+            .app_data::<Data<Arc<KeyMutex>>>()
             .unwrap()
             .to_owned();
 
-        let _guard = lock_pool
-            .async_lock(format!("{}:{}", path.workspace, path.key))
-            .await;
+        let _guard = mutex.lock(path.workspace, path.key).await;
 
         next.call(request).await
     }
@@ -163,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
     let compactor = compact::CompactWorker::new(
         Arc::new(s3.clone()),
         postgres.clone(),
+        Arc::new(lock.clone()),
         CONFIG.compact_buffer_size,
     );
     let compactor_handle = compactor.clone();
@@ -186,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
             .wrap(cors)
             .service(
                 web::scope("/api/{workspace}")
-                    // .wrap(from_fn(auth))
+                    .wrap(from_fn(auth))
                     .route(KEY_PATH, web::head().to(handlers::head))
                     .route(KEY_PATH, web::get().to(handlers::get))
                     .route(KEY_PATH, web::put().to(handlers::put).wrap(from_fn(mutex)))

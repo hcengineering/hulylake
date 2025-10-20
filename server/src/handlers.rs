@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, io, str::FromStr, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, fmt::Display, io, str::FromStr, time::SystemTime};
 
 use actix_web::{
     HttpRequest, HttpResponse,
@@ -12,19 +12,19 @@ use actix_web::{
 };
 use aws_sdk_s3::error::SdkError;
 use chrono::{DateTime, Utc};
-use futures::{StreamExt, TryFutureExt, stream};
+use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use size::Size;
 use tracing::*;
 use uuid::Uuid;
 
+use crate::s3::S3Client;
 use crate::{
     blob,
     conditional::{ConditionalMatch, any_match, none_match},
     merge,
     postgres::ObjectPart,
 };
-use crate::{compact::CompactTask, s3::S3Client};
 use crate::{compact::CompactWorker, conditional};
 use crate::{
     config::CONFIG,
