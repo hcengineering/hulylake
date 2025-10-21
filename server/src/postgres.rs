@@ -219,6 +219,7 @@ pub async fn set_part<D: serde::Serialize>(
     Ok(())
 }
 
+#[instrument(level = "debug", skip_all)]
 pub async fn compact<D: serde::Serialize + DeserializeOwned + std::fmt::Debug>(
     pool: &Pool,
     workspace: uuid::Uuid,

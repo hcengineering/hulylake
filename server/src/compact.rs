@@ -133,13 +133,23 @@ impl CompactWorker {
     }
 }
 
+#[instrument(level = "debug", skip_all, fields(workspace, huly_key))]
 async fn compact(s3: Arc<S3Client>, pool: Pool, task: CompactTask) -> anyhow::Result<(), ApiError> {
     let pool = pool.clone();
 
     let workspace = task.workspace;
     let key = task.key;
 
+    Span::current()
+        .record("workspace", workspace.to_string())
+        .record("huly_key", &key);
+
     let parts = postgres::find_parts(&pool, task.workspace, &key).await?;
+    if parts.len() <= CONFIG.compact_parts_limit {
+        debug!("compaction not needed");
+        return Ok(());
+    }
+
     let first = &parts.first().unwrap().data;
     let last = &parts.last().unwrap().data;
 
