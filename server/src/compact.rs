@@ -37,7 +37,7 @@ impl Clone for CompactWorker {
 }
 
 impl CompactWorker {
-    pub fn new(s3: Arc<S3Client>, pool: Pool, lock: Arc<KeyMutex>, buffer_size: usize) -> Self {
+    pub fn new(s3: Arc<S3Client>, pool: Pool, lock: KeyMutex, buffer_size: usize) -> Self {
         let (ingest_tx, ingest_rx) = mpsc::channel(buffer_size);
         let (compact_tx, compact_rx) = mpsc::channel(buffer_size);
 
@@ -93,7 +93,7 @@ impl CompactWorker {
         mut rx: mpsc::Receiver<CompactTask>,
         s3: Arc<S3Client>,
         pool: Pool,
-        lock: Arc<KeyMutex>,
+        lock: KeyMutex,
         pending_tasks: Arc<RwLock<HashSet<CompactTask>>>,
     ) {
         loop {
@@ -106,7 +106,7 @@ impl CompactWorker {
 
                 let res = compact(s3.clone(), pool.clone(), task.clone()).await;
                 match res {
-                    Ok(_) => debug!(key = %task.key, workspace = %task.workspace, "compact done"),
+                    Ok(_) => debug!(workspace = %task.workspace, key = %task.key, "blob compacted"),
                     Err(err) => error!(%err, "failed to compact"),
                 }
             }
@@ -134,7 +134,6 @@ impl CompactWorker {
 }
 
 async fn compact(s3: Arc<S3Client>, pool: Pool, task: CompactTask) -> anyhow::Result<(), ApiError> {
-    let s3 = s3.clone();
     let pool = pool.clone();
 
     let workspace = task.workspace;

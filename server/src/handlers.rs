@@ -433,12 +433,7 @@ pub async fn get(request: HttpRequest) -> HandlerResult<HttpResponse> {
                         response.body(SizedStream::new(partial.content_length, partial.stream))
                     }
                     None => {
-                        debug!(workspace = %path.workspace, key = %path.key, "sending compact task");
-                        let compact = request
-                            .app_data::<Data<CompactWorker>>()
-                            .unwrap()
-                            .to_owned();
-
+                        let compact = request.app_data::<Data<CompactWorker>>().unwrap();
                         compact.send(&parts).await;
 
                         let stream = merge::stream(s3.clone(), parts).await?;

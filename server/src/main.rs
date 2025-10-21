@@ -151,10 +151,7 @@ async fn main() -> anyhow::Result<()> {
             .await?
             .into_inner();
 
-        let mutex = request
-            .app_data::<Data<Arc<KeyMutex>>>()
-            .unwrap()
-            .to_owned();
+        let mutex = request.app_data::<Data<KeyMutex>>().unwrap().to_owned();
 
         let _guard = mutex.lock(path.workspace, path.key).await;
 
@@ -164,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
     let compactor = compact::CompactWorker::new(
         Arc::new(s3.clone()),
         postgres.clone(),
-        Arc::new(lock.clone()),
+        lock.clone(),
         CONFIG.compact_buffer_size,
     );
     let compactor_handle = compactor.clone();
