@@ -145,11 +145,6 @@ async fn compact(s3: Arc<S3Client>, pool: Pool, task: CompactTask) -> anyhow::Re
         .record("huly_key", &key);
 
     let parts = postgres::find_parts(&pool, task.workspace, &key).await?;
-    if parts.len() <= CONFIG.compact_parts_limit {
-        debug!("compaction not needed");
-        return Ok(());
-    }
-
     let first = &parts.first().unwrap().data;
     let last = &parts.last().unwrap().data;
 
@@ -186,7 +181,7 @@ async fn compact(s3: Arc<S3Client>, pool: Pool, task: CompactTask) -> anyhow::Re
     };
     let obj_parts = vec![&part_data];
 
-    postgres::compact(&pool, workspace, &key, inline, &part_data, last.part).await?;
+    postgres::set_part(&pool, workspace, &key, inline, &part_data).await?;
     recovery::set_object(&s3, workspace, &key, obj_parts, None).await?;
 
     Ok(())

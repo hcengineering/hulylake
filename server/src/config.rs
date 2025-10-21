@@ -73,7 +73,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| {
 
         cache_control = "public, no-cache"
 
-        compact_parts_limit = 10
+        compact_parts_limit = 100
         compact_buffer_size = 1000
     "#;
 
