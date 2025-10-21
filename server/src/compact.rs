@@ -100,19 +100,20 @@ impl CompactWorker {
             while let Some(task) = rx.recv().await {
                 let CompactTask { workspace, key } = task.clone();
 
-                debug!(key = %key, workspace = %workspace, "processing compact task");
                 let _guard = lock.lock(workspace, key).await;
 
-                let res = compact(s3.clone(), pool.clone(), task.clone()).await;
-                if let Err(err) = res {
-                    error!(%err, "failed to compact");
-                }
                 pending_tasks.write().await.remove(&task);
+
+                let res = compact(s3.clone(), pool.clone(), task.clone()).await;
+                match res {
+                    Ok(_) => debug!(key = %task.key, workspace = %task.workspace, "compact done"),
+                    Err(err) => error!(%err, "failed to compact"),
+                }
             }
         }
     }
 
-    pub async fn send(&self, parts: &Vec<ObjectPart<PartData>>) -> Result<(), ApiError> {
+    pub async fn send(&self, parts: &Vec<ObjectPart<PartData>>) {
         if parts.len() > CONFIG.compact_parts_limit {
             let task = CompactTask {
                 workspace: parts[0].data.workspace,
@@ -124,8 +125,6 @@ impl CompactWorker {
                 warn!(%err, "failed to schedule compact");
             }
         }
-
-        Ok(())
     }
 
     pub async fn stop(&self) {
@@ -134,26 +133,18 @@ impl CompactWorker {
     }
 }
 
-async fn compact(s3: Arc<S3Client>, pool: Pool, task: CompactTask) -> anyhow::Result<()> {
+async fn compact(s3: Arc<S3Client>, pool: Pool, task: CompactTask) -> anyhow::Result<(), ApiError> {
     let s3 = s3.clone();
     let pool = pool.clone();
 
     let workspace = task.workspace;
     let key = task.key;
 
-    let parts = postgres::find_parts(&pool, task.workspace, &key)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to find parts: {}", e))?;
+    let parts = postgres::find_parts(&pool, task.workspace, &key).await?;
     let first = &parts.first().unwrap().data;
     let last = &parts.last().unwrap().data;
 
-    debug!(workspace = %workspace, key = %key, parts = %parts.len(), "found parts");
-
-    let stream = merge::stream(s3.clone(), parts.to_vec())
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to merge stream: {}", e))?;
-
-    debug!(workspace = %workspace, key = %key, length = %stream.content_length, "merged stream");
+    let stream = merge::stream(s3.clone(), parts.to_vec()).await?;
 
     let uploaded = blob::upload(
         &s3,
@@ -161,10 +152,7 @@ async fn compact(s3: Arc<S3Client>, pool: Pool, task: CompactTask) -> anyhow::Re
         Size::from_bytes(stream.content_length),
         stream.stream,
     )
-    .await
-    .map_err(|e| anyhow::anyhow!("Failed to upload: {}", e))?;
-
-    debug!(workspace = %workspace, key = %key, s3_key = %uploaded.s3_key, "uploaded stream");
+    .await?;
 
     let inline = uploaded.inline.and_then(|inline| {
         if inline.len() < CONFIG.inline_threshold.bytes() as usize {
@@ -187,20 +175,10 @@ async fn compact(s3: Arc<S3Client>, pool: Pool, task: CompactTask) -> anyhow::Re
         meta: first.meta.clone(),
         merge_strategy: first.merge_strategy,
     };
+    let obj_parts = vec![&part_data];
 
-    postgres::compact(&pool, workspace, &key, inline, &part_data, last.part)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to compact in database: {}", e))?;
-
-    let parts = postgres::find_parts::<PartData>(&pool, workspace, &key)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to find parts after compact: {}", e))?;
-
-    let parts_data = parts.iter().map(|p| &p.data).collect::<Vec<&PartData>>();
-
-    recovery::set_object(&s3, workspace, &key, parts_data, None)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to set object in recovery: {}", e))?;
+    postgres::compact(&pool, workspace, &key, inline, &part_data, last.part).await?;
+    recovery::set_object(&s3, workspace, &key, obj_parts, None).await?;
 
     Ok(())
 }
